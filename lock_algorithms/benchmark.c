@@ -168,6 +168,9 @@ void *spin_benchmark(void *arg)
 
 int main(int argc, char **argv)
 {
+  // Init error code
+  int error_code = 0;
+
   // Check argument
   if (argc != 6)
     {
@@ -214,9 +217,11 @@ int main(int argc, char **argv)
     {
       printf("Error: %s lock algorithm is not available !\n",
              work.lock_algorithm);
-      printf("       Please choose one of: none, posix\n");
-      free(work.lock_algorithm);
-      return 1;
+      printf("       Please choose one of: none, posix, spin\n");
+
+      // Exit program
+      error_code = 1;
+      goto label_exit_program;
     }
 
   // Create threads
@@ -238,5 +243,5 @@ int main(int argc, char **argv)
   free(work.lock_algorithm);
 
   // Exit program
-  return 0;
+  return error_code;
 }
