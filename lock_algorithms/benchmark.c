@@ -43,17 +43,20 @@ u64 _Atomic spin = FREE;
 ticket_t ticket;
 
 // Waiting time nanosecond
-void nanowait(u64 time)
+void nanowait(double time)
 {
-  struct timespec before;
-  clock_gettime(CLOCK_MONOTONIC, &before);
-  struct timespec after;
+  struct timespec clock;
+  clock_gettime(CLOCK_MONOTONIC, &clock);
+
+  double before = clock.tv_sec + clock.tv_nsec * 1e-9;
+  double after = 0.0;
 
   do
     {
-      clock_gettime(CLOCK_MONOTONIC, &after);
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      after = clock.tv_sec + clock.tv_nsec * 1e-9;
     }
-  while ((after.tv_nsec - before.tv_nsec) < time);
+  while ((after - before) - time > 0.0);
 }
 
 // Posix benchmark
@@ -63,46 +66,51 @@ void *posix_benchmark(void *arg)
   work_t *work = (work_t *)arg;
 
   // Structure to monitoring lock and unlock
-  struct timespec before_lock;
-  struct timespec after_lock;
-  struct timespec before_unlock;
-  struct timespec after_unlock;
+  struct timespec clock;
+  double before_lock;
+  double after_lock;
+  double before_unlock;
+  double after_unlock;
 
-  u64 time_lock = 0;
-  u64 time_unlock = 0;
+  double time_lock = 0;
+  double time_unlock = 0;
 
   // loop
   for (u64 i = 0; i < work->number_of_iteration; ++i)
     {
       // Take time before the lock
-      clock_gettime(CLOCK_MONOTONIC, &before_lock);
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      before_lock = clock.tv_sec + clock.tv_nsec * 1e-9;;
 
       // Take the lock
       pthread_mutex_lock(&mut);
       {
         // Take time after the lock
-        clock_gettime(CLOCK_MONOTONIC, &after_lock);
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        after_lock = clock.tv_sec + clock.tv_nsec * 1e-9;
 
         // Critical section
         nanowait(work->critical_section_delay);
 
         // Take time before the unlock
-        clock_gettime(CLOCK_MONOTONIC, &before_unlock);
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        before_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
       }
       pthread_mutex_unlock(&mut);
 
       // Take time after the unlock
-      clock_gettime(CLOCK_MONOTONIC, &after_unlock);
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      after_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
 
       // Compute
       nanowait(work->compute_delay);
 
       // Add time
-      time_lock += (after_lock.tv_nsec - before_lock.tv_nsec);
-      time_unlock += (after_unlock.tv_nsec - before_unlock.tv_nsec);
+      time_lock += (after_lock - before_lock);
+      time_unlock += (after_unlock - before_unlock);
     }
 
-  printf("hello from thread %u, lock %llu, unlock %llu\n",
+  printf("hello from thread %u, lock %f, unlock %f\n",
          gettid(), time_lock, time_unlock);
   return NULL;
 }
@@ -129,46 +137,51 @@ void *spin_benchmark(void *arg)
   work_t *work = (work_t *)arg;
 
   // Structure to monitoring lock and unlock
-  struct timespec before_lock;
-  struct timespec after_lock;
-  struct timespec before_unlock;
-  struct timespec after_unlock;
+  struct timespec clock;
+  double before_lock;
+  double after_lock;
+  double before_unlock;
+  double after_unlock;
 
-  u64 time_lock = 0;
-  u64 time_unlock = 0;
+  double time_lock = 0;
+  double time_unlock = 0;
 
   // loop
   for (u64 i = 0; i < work->number_of_iteration; ++i)
     {
       // Take time before the lock
-      clock_gettime(CLOCK_MONOTONIC, &before_lock);
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      before_lock = clock.tv_sec + clock.tv_nsec * 1e-9;;
 
       // Take the lock
       spin_lock(&spin);
       {
         // Take time after the lock
-        clock_gettime(CLOCK_MONOTONIC, &after_lock);
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        after_lock = clock.tv_sec + clock.tv_nsec * 1e-9;
 
         // Critical section
         nanowait(work->critical_section_delay);
 
         // Take time before the unlock
-        clock_gettime(CLOCK_MONOTONIC, &before_unlock);
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        before_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
       }
       spin_unlock(&spin);
 
       // Take time after the unlock
-      clock_gettime(CLOCK_MONOTONIC, &after_unlock);
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      after_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
 
       // Compute
       nanowait(work->compute_delay);
 
       // Add time
-      time_lock += (after_lock.tv_nsec - before_lock.tv_nsec);
-      time_unlock += (after_unlock.tv_nsec - before_unlock.tv_nsec);
+      time_lock += (after_lock - before_lock);
+      time_unlock += (after_unlock - before_unlock);
     }
 
-  printf("hello from thread %u, lock %llu, unlock %llu\n",
+  printf("hello from thread %u, lock %f, unlock %f\n",
          gettid(), time_lock, time_unlock);
   return NULL;
 }
@@ -197,13 +210,14 @@ void *ticket_benchmark(void *arg)
   work_t *work = (work_t *)arg;
 
   // Structure to monitoring lock and unlock
-  struct timespec before_lock;
-  struct timespec after_lock;
-  struct timespec before_unlock;
-  struct timespec after_unlock;
+  struct timespec clock;
+  double before_lock;
+  double after_lock;
+  double before_unlock;
+  double after_unlock;
 
-  u64 time_lock = 0;
-  u64 time_unlock = 0;
+  double time_lock = 0;
+  double time_unlock = 0;
 
   // Init ticket
   ticket.ticket = 0;
@@ -213,34 +227,38 @@ void *ticket_benchmark(void *arg)
   for (u64 i = 0; i < work->number_of_iteration; ++i)
     {
       // Take time before the lock
-      clock_gettime(CLOCK_MONOTONIC, &before_lock);
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      before_lock = clock.tv_sec + clock.tv_nsec * 1e-9;;
 
       // Take the lock
       ticket_lock(&ticket);
       {
         // Take time after the lock
-        clock_gettime(CLOCK_MONOTONIC, &after_lock);
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        after_lock = clock.tv_sec + clock.tv_nsec * 1e-9;
 
         // Critical section
         nanowait(work->critical_section_delay);
 
         // Take time before the unlock
-        clock_gettime(CLOCK_MONOTONIC, &before_unlock);
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        before_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
       }
       ticket_unlock(&ticket);
 
       // Take time after the unlock
-      clock_gettime(CLOCK_MONOTONIC, &after_unlock);
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      after_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
 
       // Compute
       nanowait(work->compute_delay);
 
       // Add time
-      time_lock += (after_lock.tv_nsec - before_lock.tv_nsec);
-      time_unlock += (after_unlock.tv_nsec - before_unlock.tv_nsec);
+      time_lock += (after_lock - before_lock);
+      time_unlock += (after_unlock - before_unlock);
     }
 
-  printf("hello from thread %u, lock %llu, unlock %llu\n",
+  printf("hello from thread %u, lock %f, unlock %f\n",
          gettid(), time_lock, time_unlock);
   return NULL;
 }
