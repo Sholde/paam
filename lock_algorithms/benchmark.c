@@ -318,7 +318,7 @@ int main(int argc, char **argv)
     {
       printf("Error: %s lock algorithm is not available !\n",
              work.lock_algorithm);
-      printf("       Please choose one of: none, posix, spin\n");
+      printf("       Please choose one of: none, posix, spin, ticket\n");
 
       // Exit program
       error_code = 1;
