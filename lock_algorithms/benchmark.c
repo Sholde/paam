@@ -1,10 +1,11 @@
 // Include
-#include <stdio.h>   // printf
-#include <stdlib.h>  // atoll / allocation
-#include <string.h>  // string
-#include <pthread.h> // pthread
-#define _GNU_SOURCE
-#include <unistd.h>  // gettid
+#include <stdio.h>     // printf
+#include <stdlib.h>    // atoll / allocation
+#include <string.h>    // string
+#include <pthread.h>   // pthread
+#define _GNU_SOURCE    // gettid
+#include <unistd.h>    // gettid
+#include <stdatomic.h> // atomic operatin
 
 // Define
 #define ALIGNED 64
@@ -21,11 +22,20 @@ typedef struct work_s
   char *lock_algorithm;
 } work_t;
 
-// Global variable
-pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
-void *(*benchmark)(void *) = NULL; // pointer to benchmark function of given lock algorithm
+// Enum
+enum
+  {
+    FREE,
+    BUSY
+  };
 
-// Function
+// Global variable
+void *(*benchmark)(void *) = NULL; // pointer to benchmark function of given
+                                   // lock algorithm
+pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
+u64 _Atomic spin = FREE;
+
+// Waiting time nanosecond
 void nanowait(u64 time)
 {
   struct timespec before;
@@ -39,6 +49,7 @@ void nanowait(u64 time)
   while ((after.tv_nsec - before.tv_nsec) < time);
 }
 
+// Posix benchmark
 void *posix_benchmark(void *arg)
 {
   // Get argument
@@ -72,6 +83,72 @@ void *posix_benchmark(void *arg)
         clock_gettime(CLOCK_MONOTONIC, &before_unlock);
       }
       pthread_mutex_unlock(&mut);
+
+      // Take time after the unlock
+      clock_gettime(CLOCK_MONOTONIC, &after_unlock);
+
+      // Compute
+      nanowait(work->compute_delay);
+
+      // Add time
+      time_lock += (after_lock.tv_nsec - before_lock.tv_nsec);
+      time_unlock += (after_unlock.tv_nsec - before_unlock.tv_nsec);
+    }
+
+  printf("hello from thread %u, lock %llu, unlock %llu\n",
+         gettid(), time_lock, time_unlock);
+  return NULL;
+}
+
+// Spin lock
+void spin_lock(u64 _Atomic *spin)
+{
+  while (atomic_exchange(spin, BUSY) != FREE)
+    {
+      ;
+    }
+}
+
+// Spin unlock
+void spin_unlock(u64 _Atomic *spin)
+{
+  atomic_store(spin, FREE);
+}
+
+// Spinlock benchmark
+void *spin_benchmark(void *arg)
+{
+  // Get argument
+  work_t *work = (work_t *)arg;
+
+  // Structure to monitoring lock and unlock
+  struct timespec before_lock;
+  struct timespec after_lock;
+  struct timespec before_unlock;
+  struct timespec after_unlock;
+
+  u64 time_lock = 0;
+  u64 time_unlock = 0;
+
+  // loop
+  for (u64 i = 0; i < work->number_of_iteration; ++i)
+    {
+      // Take time before the lock
+      clock_gettime(CLOCK_MONOTONIC, &before_lock);
+
+      // Take the lock
+      spin_lock(&spin);
+      {
+        // Take time after the lock
+        clock_gettime(CLOCK_MONOTONIC, &after_lock);
+
+        // Critical section
+        nanowait(work->critical_section_delay);
+
+        // Take time before the unlock
+        clock_gettime(CLOCK_MONOTONIC, &before_unlock);
+      }
+      spin_unlock(&spin);
 
       // Take time after the unlock
       clock_gettime(CLOCK_MONOTONIC, &after_unlock);
@@ -128,6 +205,10 @@ int main(int argc, char **argv)
   else if (strcmp(work.lock_algorithm, "posix") == 0)
     {
       benchmark = posix_benchmark;
+    }
+  else if (strcmp(work.lock_algorithm, "spin") == 0)
+    {
+      benchmark = spin_benchmark;
     }
   else
     {
