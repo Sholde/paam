@@ -1,11 +1,14 @@
 // Include
-#include <stdio.h>     // printf
-#include <stdlib.h>    // atoll / allocation
-#include <string.h>    // string
-#include <pthread.h>   // pthread
-#define _GNU_SOURCE    // gettid
-#include <unistd.h>    // gettid
-#include <stdatomic.h> // atomic operatin
+#include <stdio.h>       // printf
+#include <stdlib.h>      // atoll / allocation
+#include <string.h>      // string
+#include <pthread.h>     // pthread
+#define _GNU_SOURCE      // gettid
+#include <unistd.h>      // gettid
+#include <stdatomic.h>   // atomic operatin
+#include <sys/syscall.h> // futex
+#include <linux/futex.h> // futex
+#include <errno.h>       // errEXIT
 
 // Define
 #define ALIGNED 64
@@ -32,7 +35,8 @@ typedef struct ticket_s
 enum
   {
     FREE,
-    BUSY
+    BUSY,
+    WAIT
   };
 
 // Global variable
@@ -263,6 +267,106 @@ void *ticket_benchmark(void *arg)
   return NULL;
 }
 
+// Futex function
+long futex(void *addr1, int op, int val1, struct timespec *timeout,
+           void *addr2, int val3)
+{
+  return syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
+}
+
+// Futex lock
+void futex_lock(u64 _Atomic *spin)
+{
+ label_restart:
+  if (atomic_exchange(spin, BUSY) != FREE)
+    {
+      atomic_store(spin, WAIT);
+
+      int futexp;
+      long ret = futex((void *)&futexp, FUTEX_WAIT, 0, NULL, NULL, 0);
+      if (ret == -1 && errno != EAGAIN)
+        perror("futex-FUTEX_WAIT");
+
+      goto label_restart;
+    }
+}
+
+// Futex unlock
+void futex_unlock(u64 _Atomic *spin)
+{
+  u64 _Atomic spin_load = atomic_load(spin);
+
+  if (spin_load == WAIT)
+    {
+      int futexp;
+      long ret = futex((void *)&futexp, FUTEX_WAKE, 1, NULL, NULL, 0);
+      if (ret  == -1)
+        perror("futex-FUTEX_WAKE");
+    }
+
+  atomic_store(spin, FREE);
+}
+
+// Futex benchmark
+void *futex_benchmark(void *arg)
+{
+  // Get argument
+  work_t *work = (work_t *)arg;
+
+  // Structure to monitoring lock and unlock
+  struct timespec clock;
+  double before_lock;
+  double after_lock;
+  double before_unlock;
+  double after_unlock;
+
+  double time_lock = 0;
+  double time_unlock = 0;
+
+  // Init ticket
+  ticket.ticket = 0;
+  ticket.screen = 0;
+
+  // loop
+  for (u64 i = 0; i < work->number_of_iteration; ++i)
+    {
+      // Take time before the lock
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      before_lock = clock.tv_sec + clock.tv_nsec * 1e-9;;
+
+      // Take the lock
+      futex_lock(&spin);
+      {
+        // Take time after the lock
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        after_lock = clock.tv_sec + clock.tv_nsec * 1e-9;
+
+        // Critical section
+        nanowait(work->critical_section_delay);
+
+        // Take time before the unlock
+        clock_gettime(CLOCK_MONOTONIC, &clock);
+        before_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
+      }
+      futex_unlock(&spin);
+
+      // Take time after the unlock
+      clock_gettime(CLOCK_MONOTONIC, &clock);
+      after_unlock = clock.tv_sec + clock.tv_nsec * 1e-9;
+
+      // Compute
+      nanowait(work->compute_delay);
+
+      // Add time
+      time_lock += (after_lock - before_lock);
+      time_unlock += (after_unlock - before_unlock);
+    }
+
+  printf("hello from thread %u, lock %f, unlock %f\n",
+         gettid(), time_lock, time_unlock);
+  return NULL;
+}
+
 int main(int argc, char **argv)
 {
   // Init error code
@@ -314,11 +418,15 @@ int main(int argc, char **argv)
     {
       benchmark = ticket_benchmark;
     }
+  else if (strcmp(work.lock_algorithm, "futex") == 0)
+    {
+      benchmark = ticket_benchmark;
+    }
   else
     {
       printf("Error: %s lock algorithm is not available !\n",
              work.lock_algorithm);
-      printf("       Please choose one of: none, posix, spin, ticket\n");
+      printf("       Please choose one of: none, posix, spin, ticket, futex\n");
 
       // Exit program
       error_code = 1;
