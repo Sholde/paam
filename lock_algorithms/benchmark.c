@@ -22,6 +22,12 @@ typedef struct work_s
   char *lock_algorithm;
 } work_t;
 
+typedef struct ticket_s
+{
+  u64 _Atomic ticket;
+  u64 _Atomic screen;
+} ticket_t;
+
 // Enum
 enum
   {
@@ -34,6 +40,7 @@ void *(*benchmark)(void *) = NULL; // pointer to benchmark function of given
                                    // lock algorithm
 pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 u64 _Atomic spin = FREE;
+ticket_t ticket;
 
 // Waiting time nanosecond
 void nanowait(u64 time)
@@ -166,6 +173,78 @@ void *spin_benchmark(void *arg)
   return NULL;
 }
 
+// Ticket lock
+void ticket_lock(ticket_t *ticket)
+{
+  u64 my_ticket = atomic_fetch_add(&(ticket->ticket), 1);
+
+  while (atomic_load(&(ticket->ticket)) < my_ticket)
+    {
+      ;
+    }
+}
+
+// Ticket unlock
+void ticket_unlock(ticket_t *ticket)
+{
+  atomic_fetch_add(&(ticket->screen), 1);
+}
+
+// Ticket benchmark
+void *ticket_benchmark(void *arg)
+{
+  // Get argument
+  work_t *work = (work_t *)arg;
+
+  // Structure to monitoring lock and unlock
+  struct timespec before_lock;
+  struct timespec after_lock;
+  struct timespec before_unlock;
+  struct timespec after_unlock;
+
+  u64 time_lock = 0;
+  u64 time_unlock = 0;
+
+  // Init ticket
+  ticket.ticket = 0;
+  ticket.screen = 0;
+
+  // loop
+  for (u64 i = 0; i < work->number_of_iteration; ++i)
+    {
+      // Take time before the lock
+      clock_gettime(CLOCK_MONOTONIC, &before_lock);
+
+      // Take the lock
+      ticket_lock(&ticket);
+      {
+        // Take time after the lock
+        clock_gettime(CLOCK_MONOTONIC, &after_lock);
+
+        // Critical section
+        nanowait(work->critical_section_delay);
+
+        // Take time before the unlock
+        clock_gettime(CLOCK_MONOTONIC, &before_unlock);
+      }
+      ticket_unlock(&ticket);
+
+      // Take time after the unlock
+      clock_gettime(CLOCK_MONOTONIC, &after_unlock);
+
+      // Compute
+      nanowait(work->compute_delay);
+
+      // Add time
+      time_lock += (after_lock.tv_nsec - before_lock.tv_nsec);
+      time_unlock += (after_unlock.tv_nsec - before_unlock.tv_nsec);
+    }
+
+  printf("hello from thread %u, lock %llu, unlock %llu\n",
+         gettid(), time_lock, time_unlock);
+  return NULL;
+}
+
 int main(int argc, char **argv)
 {
   // Init error code
@@ -212,6 +291,10 @@ int main(int argc, char **argv)
   else if (strcmp(work.lock_algorithm, "spin") == 0)
     {
       benchmark = spin_benchmark;
+    }
+  else if (strcmp(work.lock_algorithm, "ticket") == 0)
+    {
+      benchmark = ticket_benchmark;
     }
   else
     {
